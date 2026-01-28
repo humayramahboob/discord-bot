@@ -7,6 +7,3 @@ venv/
 # Python Cache
 __pycache__/
 *.pyc
-
-# Data (if you don't want to sync your database/json files)
-data/

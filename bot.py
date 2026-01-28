@@ -6,6 +6,7 @@ import math
 from dotenv import load_dotenv
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
+from keep_alive import keep_alive
 
 from database import (
     add_anime, update_progress, update_status, get_progress, 
@@ -261,4 +262,5 @@ async def check_new_episodes():
 
             update_last_notified(user_id, anime_id, ep_info["episode"])
 
+keep_alive()
 bot.run(TOKEN)

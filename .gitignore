@@ -1,15 +1,12 @@
-# Python caches
-__pycache__/
-*.py[cod]
-
-# Virtual environments
-env/
+# Virtual Environment
 venv/
-.venv/
 
-# OS files
-.DS_Store
-Thumbs.db
-
-# Environment variables (never push your .env!)
+# Environment Variables (Secrets)
 .env
+
+# Python Cache
+__pycache__/
+*.pyc
+
+# Data (if you don't want to sync your database/json files)
+data/

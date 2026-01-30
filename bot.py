@@ -433,6 +433,15 @@ async def seasonal(interaction: discord.Interaction, year: int = None):
 @watched.autocomplete("identifier")
 @mark.autocomplete("identifier")
 @untrack.autocomplete("identifier")
+async def autocomplete_untrack(interaction: discord.Interaction, current: str):
+    try:
+        aliases = get_aliases(interaction.user.id)  # should be fast!
+        choices = [app_commands.Choice(name=a, value=a) for a in aliases if current.lower() in a.lower()]
+        await interaction.response.autocomplete(choices[:25])
+    except Exception as e:
+        print(f"Autocomplete error: {e}")
+        # Do NOT respond here, because interaction may already be responded to
+
 @progress.autocomplete("identifier")
 async def autocomplete(interaction: discord.Interaction, current: str):
     aliases = get_aliases(interaction.user.id)

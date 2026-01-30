@@ -13,7 +13,7 @@ from database import (
     list_tracked, get_aliases, get_all_tracked, 
     update_last_notified, remove_anime, conn
 )
-from anilist import search_anime, search_anime_by_id
+from anilist import search_anime, search_anime_by_id, get_seasonal_anime
 
 # ---------------- CONFIGURATION ----------------
 load_dotenv()
@@ -29,6 +29,21 @@ GENRE_EMOJIS = {
     "Fantasy": "🧙", "Romance": "💖", "Slice of Life": "🏠", "Sci-Fi": "🤖",
     "Horror": "👻", "Mystery": "🕵️"
 }
+
+SEASONS = ["WINTER", "SPRING", "SUMMER", "FALL"]
+
+def current_season_year():
+    now = datetime.now(ZoneInfo(TIMEZONE))
+    m = now.month
+    if m <= 3:
+        return "WINTER", now.year
+    elif m <= 6:
+        return "SPRING", now.year
+    elif m <= 9:
+        return "SUMMER", now.year
+    else:
+        return "FALL", now.year
+
 
 def format_genres(genres):
     return " ".join([GENRE_EMOJIS[g] for g in genres if g in GENRE_EMOJIS])
@@ -57,76 +72,266 @@ async def on_ready():
 class ListView(discord.ui.View):
     def __init__(self, owner, rows, status="watching", page=0):
         super().__init__(timeout=180)
-        self.owner = owner  # The User object whose list this is
-        self.rows = rows 
+        self.owner = owner
+        self.rows = rows
         self.status = status
         self.page = page
-        self.update_buttons()
+        self.preview_mode = False
+        self.preview_index = 0
+        self.update_controls()
 
     def get_filtered(self):
-        return [f"**{n}** (`{a}`) → Ep {e}" for n, a, e, s in self.rows if s == self.status]
+        return [(n, a, e, s) for n, a, e, s in self.rows if s == self.status]
 
     def max_pages(self):
         return max(1, math.ceil(len(self.get_filtered()) / ITEMS_PER_PAGE))
 
-    def build_embed(self):
-        items = self.get_filtered()
+    def page_rows(self):
         start = self.page * ITEMS_PER_PAGE
-        page_items = items[start:start + ITEMS_PER_PAGE]
-        
+        return self.get_filtered()[start:start + ITEMS_PER_PAGE]
+
+    def build_list_embed(self):
+        items = [f"**{n}** (`{a}`) → Ep {e}" for n, a, e, _ in self.page_rows()]
         embed = discord.Embed(
             title=f"📺 {self.owner.display_name}'s {self.status.replace('_', ' ').title()} List",
-            description="\n".join(page_items) if page_items else "No anime in this category.",
-            color=0x9b59b6
+            description="\n".join(items) if items else "No anime here.",
+            color=0x9b59b6,
         )
         embed.set_footer(text=f"Page {self.page + 1}/{self.max_pages()}")
         return embed
 
-    def update_buttons(self):
-        max_p = self.max_pages()
-        self.prev.disabled = self.page == 0
-        self.next.disabled = self.page >= max_p - 1
+    def build_preview_embed(self):
+        rows = self.page_rows()
+        if not rows:
+            desc = "No anime to preview."
+            embed = discord.Embed(title="Preview", description=desc, color=0x9b59b6)
+            return embed
+
+        name, alias, ep, _ = rows[self.preview_index]
+        prog = get_progress(self.owner.id, alias)
+        if not prog:
+            desc = f"Not tracking {name}."
+            embed = discord.Embed(title="Preview", description=desc, color=0x9b59b6)
+            return embed
+
+        data = search_anime_by_id(prog[3])
+        embed = discord.Embed(
+            title=f"📺 {name}",
+            description=f"Episode {ep}",
+            color=0x5865F2,
+        )
+        if data and data.get("coverImage") and data["coverImage"].get("large"):
+            embed.set_image(url=data["coverImage"]["large"])
+        embed.set_footer(
+            text=f"Preview {self.preview_index + 1}/{len(rows)} - Page {self.page + 1}/{self.max_pages()}"
+        )
+        return embed
+
+    def update_controls(self):
+        # Update prev/next buttons depending on mode
+        if self.preview_mode:
+            # In preview mode, prev/next switch anime preview inside current page
+            self.prev.disabled = self.preview_index == 0
+            self.next.disabled = self.preview_index >= len(self.page_rows()) - 1
+        else:
+            # In list mode, prev/next switch pages
+            self.prev.disabled = self.page == 0
+            self.next.disabled = self.page >= self.max_pages() - 1
+
+        # Zoom button label toggles 🔍 vs ↩️ to indicate toggle state
+        self.zoom.label = "↩️" if self.preview_mode else "🔍"
 
     @discord.ui.select(
-        placeholder="Filter by status",
+        placeholder="Filter status",
         options=[
             discord.SelectOption(label="Watching", value="watching", emoji="📺"),
             discord.SelectOption(label="Watched", value="watched", emoji="✅"),
             discord.SelectOption(label="Want to Watch", value="want_to_watch", emoji="⭐"),
-        ]
+        ],
     )
     async def select_status(self, interaction: discord.Interaction, select: discord.ui.Select):
         self.status = select.values[0]
         self.page = 0
-        self.update_buttons()
-        await interaction.response.edit_message(embed=self.build_embed(), view=self)
+        self.preview_mode = False
+        self.preview_index = 0
+        self.update_controls()
+        await interaction.response.edit_message(embed=self.build_list_embed(), view=self)
 
-    @discord.ui.button(label="Previous", style=discord.ButtonStyle.gray)
+    @discord.ui.button(label="◀", style=discord.ButtonStyle.gray)
     async def prev(self, interaction: discord.Interaction, button: discord.ui.Button):
-        self.page -= 1
-        self.update_buttons()
-        await interaction.response.edit_message(embed=self.build_embed(), view=self)
+        if self.preview_mode:
+            # Move preview index left
+            if self.preview_index > 0:
+                self.preview_index -= 1
+        else:
+            # Move page left
+            if self.page > 0:
+                self.page -= 1
+        self.update_controls()
+        embed = self.build_preview_embed() if self.preview_mode else self.build_list_embed()
+        await interaction.response.edit_message(embed=embed, view=self)
 
-    @discord.ui.button(label="Next", style=discord.ButtonStyle.gray)
+    @discord.ui.button(label="▶", style=discord.ButtonStyle.gray)
     async def next(self, interaction: discord.Interaction, button: discord.ui.Button):
-        self.page += 1
-        self.update_buttons()
-        await interaction.response.edit_message(embed=self.build_embed(), view=self)
+        if self.preview_mode:
+            # Move preview index right
+            if self.preview_index < len(self.page_rows()) - 1:
+                self.preview_index += 1
+        else:
+            # Move page right
+            if self.page < self.max_pages() - 1:
+                self.page += 1
+        self.update_controls()
+        embed = self.build_preview_embed() if self.preview_mode else self.build_list_embed()
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    @discord.ui.button(label="🔍", style=discord.ButtonStyle.blurple)
+    async def zoom(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Toggle preview mode on/off
+        if not self.page_rows():
+            return await interaction.response.send_message("No anime to preview.", ephemeral=True)
+
+        self.preview_mode = not self.preview_mode
+        self.preview_index = 0  # reset to first anime when entering preview mode
+        self.update_controls()
+        embed = self.build_preview_embed() if self.preview_mode else self.build_list_embed()
+        await interaction.response.edit_message(embed=embed, view=self)
+
+
+class SeasonalView(discord.ui.View):
+    def __init__(self, user_id, season, year, page=0):
+        super().__init__(timeout=180)
+        self.user_id = user_id
+        self.season = season
+        self.year = year
+        self.page = page
+        self.preview_mode = False
+        self.preview_index = 0
+        self.data = get_seasonal_anime(season, year)
+
+        self.tracked_ids = {
+            anime_id for uid, anime_id, *_ in get_all_tracked() if uid == user_id
+        }
+
+        self.update_controls()
+
+    def max_pages(self):
+        return max(1, math.ceil(len(self.data) / ITEMS_PER_PAGE))
+
+    def page_slice(self):
+        start = self.page * ITEMS_PER_PAGE
+        return self.data[start : start + ITEMS_PER_PAGE]
+
+    def build_list_embed(self):
+        lines = []
+        for a in self.page_slice():
+            mark = "✅ " if a["id"] in self.tracked_ids else ""
+            eps = a.get("episodes") or "?"
+            lines.append(f"{mark}**{a['title']['romaji']}** — {eps} eps")
+
+        embed = discord.Embed(
+            title=f"📡 {self.season.title()} {self.year} Seasonal Anime",
+            description="\n".join(lines) if lines else "No anime found.",
+            color=0xF39C12,
+        )
+        embed.set_footer(text=f"Page {self.page + 1}/{self.max_pages()}")
+        return embed
+
+    def build_preview_embed(self):
+        page = self.page_slice()
+        if not page:
+            embed = discord.Embed(title="Preview", description="No anime to preview.", color=0xF39C12)
+            return embed
+
+        a = page[self.preview_index]
+
+        embed = discord.Embed(
+            title=f"📡 {a['title']['romaji']}",
+            color=0x5865F2,
+        )
+        if a.get("coverImage") and a["coverImage"].get("medium"):
+            embed.set_image(url=a["coverImage"]["medium"])
+
+        embed.set_footer(
+            text=f"Preview {self.preview_index + 1}/{len(page)} - Page {self.page + 1}/{self.max_pages()}"
+        )
+        return embed
+
+    def update_controls(self):
+        if self.preview_mode:
+            self.prev.disabled = self.preview_index == 0
+            self.next.disabled = self.preview_index >= len(self.page_slice()) - 1
+        else:
+            self.prev.disabled = self.page == 0
+            self.next.disabled = self.page >= self.max_pages() - 1
+
+        self.zoom.label = "↩️" if self.preview_mode else "🔍"
+
+    @discord.ui.select(
+        placeholder="Change season",
+        options=[discord.SelectOption(label=s.title(), value=s) for s in SEASONS],
+    )
+    async def season_select(self, interaction: discord.Interaction, select: discord.ui.Select):
+        self.season = select.values[0]
+        self.page = 0
+        self.preview_mode = False
+        self.preview_index = 0
+        self.data = get_seasonal_anime(self.season, self.year)
+        self.update_controls()
+        await interaction.response.edit_message(embed=self.build_list_embed(), view=self)
+
+    @discord.ui.button(label="◀", style=discord.ButtonStyle.gray)
+    async def prev(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.preview_mode:
+            if self.preview_index > 0:
+                self.preview_index -= 1
+        else:
+            if self.page > 0:
+                self.page -= 1
+        self.update_controls()
+        embed = self.build_preview_embed() if self.preview_mode else self.build_list_embed()
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    @discord.ui.button(label="▶", style=discord.ButtonStyle.gray)
+    async def next(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.preview_mode:
+            if self.preview_index < len(self.page_slice()) - 1:
+                self.preview_index += 1
+        else:
+            if self.page < self.max_pages() - 1:
+                self.page += 1
+        self.update_controls()
+        embed = self.build_preview_embed() if self.preview_mode else self.build_list_embed()
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    @discord.ui.button(label="🔍", style=discord.ButtonStyle.blurple)
+    async def zoom(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self.page_slice():
+            return await interaction.response.send_message("No anime to preview.", ephemeral=True)
+
+        self.preview_mode = not self.preview_mode
+        self.preview_index = 0
+        self.update_controls()
+        embed = self.build_preview_embed() if self.preview_mode else self.build_list_embed()
+        await interaction.response.edit_message(embed=embed, view=self)
+
+
+
 
 # ---------------- COMMANDS ----------------
 
 @bot.tree.command(name="list", description="View a user's tracked anime")
-@app_commands.describe(user="The user whose list you want to see (optional)")
+@app_commands.describe(user="User to view (optional)")
 async def list_cmd(interaction: discord.Interaction, user: discord.User = None):
-    target_user = user or interaction.user
-    rows = list_tracked(target_user.id)
-    
+    target = user or interaction.user
+    rows = list_tracked(target.id)
+
     if not rows:
-        message = "❌ This user is not tracking any anime." if user else "❌ You are not tracking any anime."
-        return await interaction.response.send_message(message)
-    
-    view = ListView(target_user, rows)
-    await interaction.response.send_message(embed=view.build_embed(), view=view)
+        return await interaction.response.send_message("No tracked anime.")
+
+    view = ListView(target, rows)
+    await interaction.response.send_message(embed=view.build_list_embed(), view=view)
+
 
 @bot.tree.command(name="progress", description="Check detailed progress for an anime")
 @app_commands.describe(identifier="Anime name or alias")
@@ -217,6 +422,17 @@ async def untrack(interaction: discord.Interaction, identifier: str):
     remove_anime(interaction.user.id, prog[3])
     await interaction.response.send_message(f"🗑️ Removed **{prog[0]}**.")
 
+@bot.tree.command(name="seasonal", description="Browse seasonal anime")
+@app_commands.describe(year="Season year (optional)")
+async def seasonal(interaction: discord.Interaction, year: int = None):
+    season, default_year = current_season_year()
+    year = year or default_year
+
+    view = SeasonalView(interaction.user.id, season, year)
+
+    await interaction.response.send_message(embed=view.build_list_embed(), view=view)
+
+
 # ---------------- AUTOCOMPLETE ----------------
 
 @watched.autocomplete("identifier")
@@ -232,35 +448,57 @@ async def autocomplete(interaction: discord.Interaction, current: str):
 async def check_new_episodes():
     await bot.wait_until_ready()
     now_utc = datetime.now(timezone.utc)
-    
+
+    guild = bot.get_guild(GUILD_ID)
+    if not guild:
+        return
+
+    # pick a usable text channel (first one bot can send to)
+    target_channel = None
+    for ch in guild.text_channels:
+        if ch.permissions_for(guild.me).send_messages:
+            target_channel = ch
+            break
+
     for user_id, anime_id, last_watched, last_notified in get_all_tracked():
         data = search_anime_by_id(anime_id)
         if not data or not data.get("nextAiringEpisode"):
             continue
 
         ep_info = data["nextAiringEpisode"]
+
         if ep_info["episode"] <= last_notified:
             continue
 
-        airing_at_utc = datetime.fromtimestamp(ep_info["airingAt"], tz=timezone.utc)
+        airing_at_utc = datetime.fromtimestamp(
+            ep_info["airingAt"], tz=timezone.utc
+        )
 
         if now_utc >= airing_at_utc:
-            user = bot.get_user(user_id)
-            msg = f"🎉 **{data['title']['romaji']}** Episode {ep_info['episode']} just aired!"
-            
-            guild = bot.get_guild(GUILD_ID)
-            if guild and ALERT_ROLE_ID:
-                role = guild.get_role(ALERT_ROLE_ID)
-                if role: msg = f"{role.mention} {msg}"
 
+            user_mention = f"<@{user_id}>"
+            title = data["title"]["romaji"]
+
+            msg = f"{user_mention} 🎉 **{title}** Episode **{ep_info['episode']}** is now out!"
+
+            if ALERT_ROLE_ID:
+                role = guild.get_role(ALERT_ROLE_ID)
+                if role:
+                    msg = f"{role.mention} {msg}"
+
+            if target_channel:
+                try:
+                    await target_channel.send(msg)
+                except Exception as e:
+                    print("Channel send failed:", e)
+
+            user = bot.get_user(user_id)
             if user:
-                try: await user.send(msg)
-                except: pass
-            
-            if guild and guild.text_channels:
-                await guild.text_channels[0].send(msg)
+                try:
+                    await user.send(f"🎉 {title} Episode {ep_info['episode']} is now out!")
+                except:
+                    pass
 
             update_last_notified(user_id, anime_id, ep_info["episode"])
-
 keep_alive()
 bot.run(TOKEN)

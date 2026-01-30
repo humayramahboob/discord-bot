@@ -38,6 +38,6 @@ This is a personal Discord bot project I created to use with my friends, who enj
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](ttps://github.com/humayramahboob/discord-bot/blob/main/LICENSE) file for details.
+This project is licensed under the MIT License - see the [LICENSE](https://github.com/humayramahboob/discord-bot/blob/main/LICENSE) file for details.
 
 

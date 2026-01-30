@@ -128,17 +128,13 @@ class ListView(discord.ui.View):
         return embed
 
     def update_controls(self):
-        # Update prev/next buttons depending on mode
         if self.preview_mode:
-            # In preview mode, prev/next switch anime preview inside current page
             self.prev.disabled = self.preview_index == 0
             self.next.disabled = self.preview_index >= len(self.page_rows()) - 1
         else:
-            # In list mode, prev/next switch pages
             self.prev.disabled = self.page == 0
             self.next.disabled = self.page >= self.max_pages() - 1
 
-        # Zoom button label toggles 🔍 vs ↩️ to indicate toggle state
         self.zoom.label = "↩️" if self.preview_mode else "🔍"
 
     @discord.ui.select(
@@ -160,11 +156,9 @@ class ListView(discord.ui.View):
     @discord.ui.button(label="◀", style=discord.ButtonStyle.gray)
     async def prev(self, interaction: discord.Interaction, button: discord.ui.Button):
         if self.preview_mode:
-            # Move preview index left
             if self.preview_index > 0:
                 self.preview_index -= 1
         else:
-            # Move page left
             if self.page > 0:
                 self.page -= 1
         self.update_controls()
@@ -174,11 +168,9 @@ class ListView(discord.ui.View):
     @discord.ui.button(label="▶", style=discord.ButtonStyle.gray)
     async def next(self, interaction: discord.Interaction, button: discord.ui.Button):
         if self.preview_mode:
-            # Move preview index right
             if self.preview_index < len(self.page_rows()) - 1:
                 self.preview_index += 1
         else:
-            # Move page right
             if self.page < self.max_pages() - 1:
                 self.page += 1
         self.update_controls()
@@ -187,12 +179,11 @@ class ListView(discord.ui.View):
 
     @discord.ui.button(label="🔍", style=discord.ButtonStyle.blurple)
     async def zoom(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # Toggle preview mode on/off
         if not self.page_rows():
             return await interaction.response.send_message("No anime to preview.", ephemeral=True)
 
         self.preview_mode = not self.preview_mode
-        self.preview_index = 0  # reset to first anime when entering preview mode
+        self.preview_index = 0 
         self.update_controls()
         embed = self.build_preview_embed() if self.preview_mode else self.build_list_embed()
         await interaction.response.edit_message(embed=embed, view=self)
@@ -320,6 +311,7 @@ class SeasonalView(discord.ui.View):
 
 # ---------------- COMMANDS ----------------
 
+#shows the list of anime you are tracking
 @bot.tree.command(name="list", description="View a user's tracked anime")
 @app_commands.describe(user="User to view (optional)")
 async def list_cmd(interaction: discord.Interaction, user: discord.User = None):
@@ -332,7 +324,7 @@ async def list_cmd(interaction: discord.Interaction, user: discord.User = None):
     view = ListView(target, rows)
     await interaction.response.send_message(embed=view.build_list_embed(), view=view)
 
-
+#shows the anime and information about it including next air date and where you left off
 @bot.tree.command(name="progress", description="Check detailed progress for an anime")
 @app_commands.describe(identifier="Anime name or alias")
 async def progress(interaction: discord.Interaction, identifier: str):
@@ -373,6 +365,7 @@ async def progress(interaction: discord.Interaction, identifier: str):
 
     await interaction.response.send_message(embed=embed)
 
+#starts adding a new anime to put on your tracking list
 @bot.tree.command(name="track", description="Start tracking a new anime")
 async def track(interaction: discord.Interaction, anime: str, alias: str = None, episode: int = 0):
     data = search_anime(anime)
@@ -390,6 +383,7 @@ async def track(interaction: discord.Interaction, anime: str, alias: str = None,
     
     await interaction.response.send_message(embed=embed)
 
+# Can mark down the episode you watched 
 @bot.tree.command(name="watched", description="Update progress")
 async def watched(interaction: discord.Interaction, identifier: str, episode: int):
     prog = get_progress(interaction.user.id, identifier)
@@ -399,6 +393,7 @@ async def watched(interaction: discord.Interaction, identifier: str, episode: in
     update_progress(interaction.user.id, prog[3], episode)
     await interaction.response.send_message(f"✅ **{prog[0]}** updated to episode {episode}.")
 
+#can change status of the aniime to watched, watching or want to watch
 @bot.tree.command(name="mark", description="Update status")
 @app_commands.choices(status=[
     app_commands.Choice(name="Watching", value="watching"),
@@ -453,7 +448,6 @@ async def check_new_episodes():
     if not guild:
         return
 
-    # pick a usable text channel (first one bot can send to)
     target_channel = None
     for ch in guild.text_channels:
         if ch.permissions_for(guild.me).send_messages:

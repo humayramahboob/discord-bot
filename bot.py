@@ -11,7 +11,7 @@ from keep_alive import keep_alive
 from database import (
     add_anime, update_progress, update_status, get_progress, 
     list_tracked, get_aliases, get_all_tracked, 
-    update_last_notified, remove_anime, conn
+    update_last_notified, remove_anime, update_alias, conn
 )
 from anilist import search_anime, search_anime_by_id, get_seasonal_anime
 
@@ -427,12 +427,39 @@ async def seasonal(interaction: discord.Interaction, year: int = None):
 
     await interaction.response.send_message(embed=view.build_list_embed(), view=view)
 
+@bot.tree.command(name="alias", description="Change the alias for a tracked anime")
+@app_commands.describe(
+    identifier="Current alias or anime name",
+    new_alias="New alias to use"
+)
+async def change_alias(
+    interaction: discord.Interaction,
+    identifier: str,
+    new_alias: str
+):
+    prog = get_progress(interaction.user.id, identifier)
+    if not prog:
+        return await interaction.response.send_message(
+            "❌ Not tracking this anime.",
+            ephemeral=True
+        )
+
+    anime_name, old_alias, _, anime_id, _ = prog
+
+    update_alias(interaction.user.id, anime_id, new_alias)
+
+    await interaction.response.send_message(
+        f"✏️ **{anime_name}** alias changed from `{old_alias}` → `{new_alias}`"
+    )
+
+
 
 # ---------------- AUTOCOMPLETE ----------------
 
 @watched.autocomplete("identifier")
 @mark.autocomplete("identifier")
 @untrack.autocomplete("identifier")
+@change_alias.autocomplete("identifier")
 async def autocomplete_untrack(interaction: discord.Interaction, current: str):
     try:
         aliases = get_aliases(interaction.user.id)  # should be fast!

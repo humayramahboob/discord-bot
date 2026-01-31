@@ -94,3 +94,12 @@ def remove_anime(user_id, anime_id):
     WHERE user_id = ? AND anime_id = ?
     """, (user_id, anime_id))
     conn.commit()
+
+# ---------------- ALIAS ----------------
+def update_alias(user_id, anime_id, new_alias):
+    cursor.execute("""
+    UPDATE tracked_anime
+    SET alias = ?
+    WHERE user_id = ? AND anime_id = ?
+    """, (new_alias, user_id, anime_id))
+    conn.commit()

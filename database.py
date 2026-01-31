@@ -2,7 +2,7 @@ import sqlite3
 import os
 
 os.makedirs("data", exist_ok=True)
-conn = sqlite3.connect("data/tracker.db")
+conn = sqlite3.connect("tracker.db")
 cursor = conn.cursor()
 
 # ---------------- TABLE ----------------
@@ -103,6 +103,3 @@ def update_alias(user_id, anime_id, new_alias):
     WHERE user_id = ? AND anime_id = ?
     """, (new_alias, user_id, anime_id))
     conn.commit()
-
-add_anime(391512501386477578, 12971, "Jujutsu Kaisen", "JK", 0, "watched")
-add_anime(1028475649406550067, 140184, "Otonari no Tenshi-sama ni Itsunomanika Dame Ningen ni Sareteita Ken", "ONTNIDNNSK", 0, "want_to_watch")

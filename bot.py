@@ -53,6 +53,7 @@ class MyBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
         intents.members = True 
+        intents.message_content = True
         super().__init__(command_prefix="!", intents=intents)
 
     async def setup_hook(self):
@@ -77,7 +78,7 @@ async def on_message(message):
         return
 
     if "gojo" in message.content.lower():
-        await message.channel.send(f"You called, {message.author.mention}?")
+        await message.channel.send(f"I'm right here bbg")
         await message.channel.send(GOJO_GIF_URL)
 
     elif bot.user in message.mentions:

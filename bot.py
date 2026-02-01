@@ -68,6 +68,25 @@ bot = MyBot()
 async def on_ready():
     print(f"Logged in as {bot.user} (ID: {bot.user.id})")
 
+GOJO_GIF_URL = "https://giphy.com/gifs/jujutsu-kaisen-kilianirl-WDH0KOD68mVzqTrfFr"
+
+@bot.event
+async def on_message(message):
+    # Prevent responding to self
+    if message.author == bot.user:
+        return
+
+    if "gojo" in message.content.lower():
+        await message.channel.send(f"You called, {message.author.mention}?")
+        await message.channel.send(GOJO_GIF_URL)
+
+    elif bot.user in message.mentions:
+        await message.channel.send(f"Yes, {message.author.mention}? You summoned me?")
+
+    # Important: process other commands so they keep working
+    await bot.process_commands(message)
+
+
 # ---------------- UI COMPONENTS ----------------
 class ListView(discord.ui.View):
     def __init__(self, owner, rows, status="watching", page=0):

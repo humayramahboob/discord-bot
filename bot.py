@@ -7,11 +7,13 @@ from dotenv import load_dotenv
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from keep_alive import keep_alive
+from database import init_db
+
 
 from database import (
     add_anime, update_progress, update_status, get_progress, 
     list_tracked, get_aliases, get_all_tracked, 
-    update_last_notified, remove_anime, update_alias, conn
+    update_last_notified, remove_anime, update_alias
 )
 from anilist import search_anime, search_anime_by_id, get_seasonal_anime
 
@@ -67,7 +69,8 @@ bot = MyBot()
 
 @bot.event
 async def on_ready():
-    print(f"Logged in as {bot.user} (ID: {bot.user.id})")
+    init_db()
+    print(f"Logged in as {bot.user}")
 
 GOJO_GIF_URL = "https://giphy.com/gifs/jujutsu-kaisen-kilianirl-WDH0KOD68mVzqTrfFr"
 
@@ -84,7 +87,6 @@ async def on_message(message):
     elif bot.user in message.mentions:
         await message.channel.send(f"Yes, {message.author.mention}? You summoned me?")
 
-    # Important: process other commands so they keep working
     await bot.process_commands(message)
 
 

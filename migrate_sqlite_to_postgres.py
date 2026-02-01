@@ -15,6 +15,21 @@ if not POSTGRES_URL:
 pg_conn = psycopg2.connect(POSTGRES_URL)
 pg_cursor = pg_conn.cursor()
 
+# ---------- CREATE TABLE IN POSTGRES IF NOT EXISTS ----------
+pg_cursor.execute("""
+CREATE TABLE IF NOT EXISTS tracked_anime (
+    user_id BIGINT,
+    anime_id BIGINT,
+    anime_name TEXT,
+    alias TEXT,
+    last_watched INTEGER DEFAULT 0,
+    last_notified INTEGER DEFAULT 0,
+    status TEXT DEFAULT 'watching',
+    PRIMARY KEY (user_id, anime_id)
+)
+""")
+pg_conn.commit()
+
 # ---------- FETCH SQLITE DATA ----------
 sqlite_cursor.execute("""
 SELECT

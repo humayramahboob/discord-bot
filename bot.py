@@ -260,14 +260,23 @@ class SeasonalView(discord.ui.View):
 
         embed = discord.Embed(
             title=f"📡 {a['title']['romaji']}",
+            description=a.get("description") or "No description available.",
             color=0x5865F2,
         )
+
+        if a.get("genres"):
+            embed.add_field(
+            name="Genres",
+            value=format_genres(a["genres"]),
+            inline=False
+        )
+
         if a.get("coverImage") and a["coverImage"].get("medium"):
             embed.set_image(url=a["coverImage"]["medium"])
 
-        embed.set_footer(
-            text=f"Preview {self.preview_index + 1}/{len(page)} - Page {self.page + 1}/{self.max_pages()}"
-        )
+            embed.set_footer(
+                text=f"Preview {self.preview_index + 1}/{len(page)} - Page {self.page + 1}/{self.max_pages()}"
+            )
         return embed
 
     def update_controls(self):
@@ -352,38 +361,75 @@ async def list_cmd(interaction: discord.Interaction, user: discord.User = None):
 async def progress(interaction: discord.Interaction, identifier: str):
     prog = get_progress(interaction.user.id, identifier)
     if not prog:
-        return await interaction.response.send_message(f"❌ You are not tracking '{identifier}'.", ephemeral=True)
-    
+        return await interaction.response.send_message(
+            f"❌ You are not tracking '{identifier}'.",
+            ephemeral=True
+        )
+
     anime_name, alias, last_watched, anime_id, status = prog
     data = search_anime_by_id(anime_id)
-    
+
     if not data:
-        return await interaction.response.send_message("❌ Could not retrieve data from AniList.")
+        return await interaction.response.send_message(
+            "❌ Could not retrieve data from AniList.",
+            ephemeral=True
+        )
+
+    # --- Description ---
+    description = data.get("description") or "No description available."
 
     embed = discord.Embed(
         title=f"📺 {anime_name} ({alias})",
-        description=f"Status: {status}\nLast watched episode: {last_watched}",
+        description=description,
         color=0x3498db
     )
-    
-    total_eps = data.get("episodes")
-    if total_eps:
-        embed.description += f"\nTotal episodes: {total_eps}"
 
-    embed.set_thumbnail(url=data.get("coverImage", {}).get("large"))
+    # --- Status / Progress ---
+    embed.add_field(
+        name="Progress",
+        value=f"**Status:** {status.title()}\n**Last watched:** Episode {last_watched}",
+        inline=False
+    )
 
+    # --- Total Episodes ---
+    if data.get("episodes"):
+        embed.add_field(
+            name="Total Episodes",
+            value=str(data["episodes"]),
+            inline=True
+        )
+
+    # --- Genres ---
+    genres = format_genres(data.get("genres", []))
+    if genres:
+        embed.add_field(
+            name="Genres",
+            value=genres,
+            inline=True
+        )
+
+    # --- Next Airing ---
     next_ep = data.get("nextAiringEpisode")
     if next_ep:
-        airing_ts = datetime.fromtimestamp(next_ep['airingAt'], tz=timezone.utc).astimezone(ZoneInfo(TIMEZONE))
-        embed.add_field(name="Next Episode", value=f"Airs at {airing_ts.strftime('%Y-%m-%d %H:%M %Z')}", inline=True)
+        airing_ts = datetime.fromtimestamp(
+            next_ep["airingAt"], tz=timezone.utc
+        ).astimezone(ZoneInfo(TIMEZONE))
+
+        embed.add_field(
+            name="Next Episode",
+            value=f"Episode {next_ep['episode']} — {airing_ts.strftime('%Y-%m-%d %H:%M %Z')}",
+            inline=False
+        )
     else:
-        embed.add_field(name="Next Episode", value="Completed or Not Airing", inline=True)
+        embed.add_field(
+            name="Next Episode",
+            value="Completed or not airing",
+            inline=False
+        )
 
-    embed.add_field(name="\u200b", value="\u200b", inline=True)
-
-    genres_str = format_genres(data.get("genres", []))
-    if genres_str:
-        embed.add_field(name="Genres", value=genres_str, inline=True)
+    # --- Thumbnail ---
+    if data.get("coverImage", {}).get("large"):
+        embed.set_thumbnail(url=data["coverImage"]["large"])
 
     await interaction.response.send_message(embed=embed)
 
@@ -528,16 +574,19 @@ async def check_new_episodes():
 
         if now_utc >= airing_at_utc:
 
-            user_mention = f"<@{user_id}>"
-            title = data["title"]["romaji"]
+            member = guild.get_member(user_id)
+            if not member:
+                continue
 
-            msg = f"{user_mention} 🎉 **{title}** Episode **{ep_info['episode']}** is now out!"
-
+            # Only notify if the user HAS the alert role
             if ALERT_ROLE_ID:
-                role = guild.get_role(ALERT_ROLE_ID)
-                if role:
-                    msg = f"{role.mention} {msg}"
+                alert_role = guild.get_role(ALERT_ROLE_ID)
+                if not alert_role or alert_role not in member.roles:
+                    continue  
+                title = data["title"]["romaji"]
+                user_mention = member.mention
 
+                msg = f"{user_mention} 🎉 **{title}** Episode **{ep_info['episode']}** is now out!"         
             if target_channel:
                 try:
                     await target_channel.send(msg)

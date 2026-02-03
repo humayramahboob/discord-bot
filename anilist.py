@@ -1,67 +1,15 @@
 import requests
+import re
 
 API_URL = "https://graphql.anilist.co"
 
-def search_anime(search):
-    query = """
-    query ($search: String) {
-      Media(search: $search, type: ANIME) {
-        id
-        title {
-          romaji
-        }
-        coverImage {
-          large
-          medium
-          color
-        }
-        genres
-        episodes
-        nextAiringEpisode {
-          episode
-          airingAt
-        }
-      }
-    }
-    """
-    variables = {"search": search}
-    r = requests.post(API_URL, json={"query": query, "variables": variables})
-    data = r.json()
 
-    if "data" in data and data["data"]["Media"]:
-        return data["data"]["Media"]
-    return None
+def clean_description(text: str, max_len: int = 300):
+    if not text:
+        return None
+    text = re.sub(r"<.*?>", "", text)  # strip HTML
+    return text[:max_len] + ("..." if len(text) > max_len else "")
 
-
-def search_anime_by_id(anime_id):
-    query = """
-    query ($id: Int) {
-      Media(id: $id, type: ANIME) {
-        id
-        title {
-          romaji
-        }
-        coverImage {
-          large
-          medium
-          color
-        }
-        genres
-        episodes
-        nextAiringEpisode {
-          episode
-          airingAt
-        }
-      }
-    }
-    """
-    variables = {"id": anime_id}
-    r = requests.post(API_URL, json={"query": query, "variables": variables})
-    data = r.json()
-
-    if "data" in data and data["data"]["Media"]:
-        return data["data"]["Media"]
-    return None
 
 def anilist_request(query, variables=None):
     r = requests.post(
@@ -76,6 +24,59 @@ def anilist_request(query, variables=None):
 
     return data["data"]
 
+
+def search_anime(search):
+    query = """
+    query ($search: String) {
+      Media(search: $search, type: ANIME) {
+        id
+        title { romaji }
+        description(asHtml: false)
+        coverImage { large medium color }
+        genres
+        episodes
+        nextAiringEpisode {
+          episode
+          airingAt
+        }
+      }
+    }
+    """
+    data = anilist_request(query, {"search": search})
+    if not data:
+        return None
+
+    media = data["Media"]
+    media["description"] = clean_description(media.get("description"))
+    return media
+
+
+def search_anime_by_id(anime_id):
+    query = """
+    query ($id: Int) {
+      Media(id: $id, type: ANIME) {
+        id
+        title { romaji }
+        description(asHtml: false)
+        coverImage { large medium color }
+        genres
+        episodes
+        nextAiringEpisode {
+          episode
+          airingAt
+        }
+      }
+    }
+    """
+    data = anilist_request(query, {"id": anime_id})
+    if not data:
+        return None
+
+    media = data["Media"]
+    media["description"] = clean_description(media.get("description"))
+    return media
+
+
 def get_seasonal_anime(season: str, year: int, page: int = 1, per_page: int = 50):
     query = """
     query ($season: MediaSeason, $seasonYear: Int, $page: Int, $perPage: Int) {
@@ -88,6 +89,8 @@ def get_seasonal_anime(season: str, year: int, page: int = 1, per_page: int = 50
         ) {
           id
           title { romaji }
+          description(asHtml: false)
+          genres
           episodes
           coverImage { medium }
         }
@@ -95,15 +98,18 @@ def get_seasonal_anime(season: str, year: int, page: int = 1, per_page: int = 50
     }
     """
 
-    variables = {
+    data = anilist_request(query, {
         "season": season.upper(),
         "seasonYear": year,
         "page": page,
         "perPage": per_page
-    }
+    })
 
-    data = anilist_request(query, variables)
     if not data:
         return []
 
-    return data["Page"]["media"]
+    media = data["Page"]["media"]
+    for a in media:
+        a["description"] = clean_description(a.get("description"), 250)
+
+    return media

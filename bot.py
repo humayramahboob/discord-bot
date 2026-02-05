@@ -552,54 +552,48 @@ async def check_new_episodes():
     if not guild:
         return
 
-    target_channel = None
-    for ch in guild.text_channels:
-        if ch.permissions_for(guild.me).send_messages:
-            target_channel = ch
-            break
+    target_channel = next(
+        (ch for ch in guild.text_channels if ch.permissions_for(guild.me).send_messages),
+        None
+    )
 
     for user_id, anime_id, last_watched, last_notified in get_all_tracked():
+        last_notified = last_notified or 0
+
         data = search_anime_by_id(anime_id)
         if not data or not data.get("nextAiringEpisode"):
             continue
 
         ep_info = data["nextAiringEpisode"]
+        airing_at_utc = datetime.fromtimestamp(ep_info["airingAt"], tz=timezone.utc)
 
         if ep_info["episode"] <= last_notified:
             continue
 
-        airing_at_utc = datetime.fromtimestamp(
-            ep_info["airingAt"], tz=timezone.utc
-        )
+        if now_utc < airing_at_utc:
+            continue
 
-        if now_utc >= airing_at_utc:
+        member = guild.get_member(user_id)
+        if not member:
+            continue
 
-            member = guild.get_member(user_id)
-            if not member:
+        if ALERT_ROLE_ID:
+            alert_role = guild.get_role(ALERT_ROLE_ID)
+            if not alert_role or alert_role not in member.roles:
                 continue
 
-            # Only notify if the user HAS the alert role
-            if ALERT_ROLE_ID:
-                alert_role = guild.get_role(ALERT_ROLE_ID)
-                if not alert_role or alert_role not in member.roles:
-                    continue  
-                title = data["title"]["romaji"]
-                user_mention = member.mention
+        title = data["title"]["romaji"]
+        msg = f"{member.mention} 🎉 **{title}** Episode **{ep_info['episode']}** is now out!"
 
-                msg = f"{user_mention} 🎉 **{title}** Episode **{ep_info['episode']}** is now out!"         
-            if target_channel:
-                try:
-                    await target_channel.send(msg)
-                except Exception as e:
-                    print("Channel send failed:", e)
+        if target_channel:
+            await target_channel.send(msg)
 
-            user = bot.get_user(user_id)
-            if user:
-                try:
-                    await user.send(f"🎉 {title} Episode {ep_info['episode']} is now out!")
-                except:
-                    pass
+        try:
+            await member.send(f"🎉 {title} Episode {ep_info['episode']} is now out!")
+        except:
+            pass
 
-            update_last_notified(user_id, anime_id, ep_info["episode"])
+        update_last_notified(user_id, anime_id, ep_info["episode"])
+
 keep_alive()
 bot.run(TOKEN)

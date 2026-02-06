@@ -4,11 +4,10 @@ from discord.ext import commands, tasks
 import os
 import math
 from dotenv import load_dotenv
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 from keep_alive import keep_alive
 from database import init_db
-
 
 from database import (
     add_anime, update_progress, update_status, get_progress, 
@@ -62,7 +61,8 @@ class MyBot(commands.Bot):
         guild = discord.Object(id=GUILD_ID)
         self.tree.copy_global_to(guild=guild)
         await self.tree.sync(guild=guild)
-        check_new_episodes.start()
+        if not check_new_episodes.is_running():
+            check_new_episodes.start()
         print(f"✅ Bot is synced and background tasks started.")
 
 bot = MyBot()
@@ -545,55 +545,76 @@ async def autocomplete(interaction: discord.Interaction, current: str):
 # ---------------- BACKGROUND TASK ----------------
 @tasks.loop(minutes=10)
 async def check_new_episodes():
-    await bot.wait_until_ready()
-    now_utc = datetime.now(timezone.utc)
+    try:
+        print("🔁 Checking for new episodes")
 
-    guild = bot.get_guild(GUILD_ID)
-    if not guild:
-        return
+        now_utc = datetime.now(timezone.utc)
+        guild = bot.get_guild(GUILD_ID)
 
-    target_channel = next(
-        (ch for ch in guild.text_channels if ch.permissions_for(guild.me).send_messages),
-        None
-    )
+        if not guild:
+            print("❌ Guild not found")
+            return
 
-    for user_id, anime_id, last_watched, last_notified in get_all_tracked():
-        last_notified = last_notified or 0
+        target_channel = next(
+            (ch for ch in guild.text_channels if ch.permissions_for(guild.me).send_messages),
+            None
+        )
 
-        data = search_anime_by_id(anime_id)
-        if not data or not data.get("nextAiringEpisode"):
-            continue
+        tracked = get_all_tracked()
+        print(f"📦 Tracked entries: {len(tracked)}")
 
-        ep_info = data["nextAiringEpisode"]
-        airing_at_utc = datetime.fromtimestamp(ep_info["airingAt"], tz=timezone.utc)
+        for user_id, anime_id, last_watched, last_notified in tracked:
+            last_notified = last_notified or 0
 
-        if ep_info["episode"] <= last_notified:
-            continue
-
-        if now_utc < airing_at_utc:
-            continue
-
-        member = guild.get_member(user_id)
-        if not member:
-            continue
-
-        if ALERT_ROLE_ID:
-            alert_role = guild.get_role(ALERT_ROLE_ID)
-            if not alert_role or alert_role not in member.roles:
+            data = search_anime_by_id(anime_id)
+            if not data:
                 continue
 
-        title = data["title"]["romaji"]
-        msg = f"{member.mention} 🎉 **{title}** Episode **{ep_info['episode']}** is now out!"
+            ep_info = data.get("nextAiringEpisode")
+            if not ep_info:
+                continue
 
-        if target_channel:
-            await target_channel.send(msg)
+            airing_at = datetime.fromtimestamp(
+                ep_info["airingAt"], tz=timezone.utc
+            )
 
-        try:
-            await member.send(f"🎉 {title} Episode {ep_info['episode']} is now out!")
-        except:
-            pass
+            if ep_info["episode"] <= last_notified:
+                continue
 
-        update_last_notified(user_id, anime_id, ep_info["episode"])
+            if now_utc + timedelta(minutes=30) < airing_at:
+                continue
+
+            member = guild.get_member(user_id)
+            if not member:
+                continue
+
+            if ALERT_ROLE_ID:
+                role = guild.get_role(ALERT_ROLE_ID)
+                if not role or role not in member.roles:
+                    continue
+
+            title = data["title"]["romaji"]
+            message = (
+                f"{member.mention} 🎉 **{title}** "
+                f"Episode **{ep_info['episode']}** is now out!"
+            )
+
+            if target_channel:
+                await target_channel.send(message)
+
+            try:
+                await member.send(
+                    f"🎉 {title} Episode {ep_info['episode']} is now out!"
+                )
+            except:
+                pass
+
+            update_last_notified(user_id, anime_id, ep_info["episode"])
+            print(f"✅ Notified {member} — {title} EP {ep_info['episode']}")
+
+    except Exception as e:
+        print("🔥 Episode checker crashed:", e)
+
 
 keep_alive()
 bot.run(TOKEN)

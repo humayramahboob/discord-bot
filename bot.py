@@ -22,8 +22,6 @@ TOKEN = os.getenv("DISCORD_TOKEN")
 GUILD_ID = int(os.getenv("GUILD_ID"))
 ALERT_ROLE_ID = os.getenv("ALERT_ROLE_ID")
 ALERT_ROLE_ID = int(ALERT_ROLE_ID) if ALERT_ROLE_ID else None
-ALERT_CHANNEL_ID = os.getenv("ALERT_CHANNEL_ID")
-ALERT_CHANNEL_ID = int(ALERT_CHANNEL_ID) if ALERT_CHANNEL_ID else None
 TIMEZONE = os.getenv("TIMEZONE", "America/New_York")
 ITEMS_PER_PAGE = 10
 
@@ -578,11 +576,11 @@ async def check_new_episodes():
             print("❌ Guild not found")
             return
 
-        target_channel = guild.get_channel(ALERT_CHANNEL_ID) if ALERT_CHANNEL_ID else None
+        target_channel = next(
+            (ch for ch in guild.text_channels if ch.permissions_for(guild.me).send_messages),
+            None
+        )
 
-        if not target_channel:
-            print("❌ Alert channel not found or not set")
-            return
 
 
         tracked = get_all_tracked()

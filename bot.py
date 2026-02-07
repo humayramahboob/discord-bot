@@ -455,13 +455,34 @@ async def track(interaction: discord.Interaction, anime: str, alias: str = None,
 
 # Can mark down the episode you watched 
 @bot.tree.command(name="watched", description="Update progress")
-async def watched(interaction: discord.Interaction, identifier: str, episode: int):
+@app_commands.describe(
+    identifier="Anime name or alias",
+    episode="Episode number (optional)"
+)
+async def watched(
+    interaction: discord.Interaction,
+    identifier: str,
+    episode: int = None
+):
     prog = get_progress(interaction.user.id, identifier)
     if not prog:
-        return await interaction.response.send_message("❌ Not tracking this anime.", ephemeral=True)
+        return await interaction.response.send_message(
+            "❌ Not tracking this anime.",
+            ephemeral=True
+        )
 
-    update_progress(interaction.user.id, prog[3], episode)
-    await interaction.response.send_message(f"✅ **{prog[0]}** updated to episode {episode}.")
+    anime_name, alias, last_watched, anime_id, status = prog
+
+    # Auto-increment if no episode is provided
+    if episode is None:
+        episode = last_watched + 1
+
+    update_progress(interaction.user.id, anime_id, episode)
+
+    await interaction.response.send_message(
+        f"✅ **{anime_name}** updated to episode **{episode}**."
+    )
+
 
 #can change status of the aniime to watched, watching or want to watch
 @bot.tree.command(name="mark", description="Update status")

@@ -8,14 +8,19 @@ if not DATABASE_URL:
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
+pool = None
 async def init_db():
-    global pool
+    global pool 
     if pool is None:
+        fixed_url = DATABASE_URL
+        if fixed_url.startswith("postgres://"):
+            fixed_url = fixed_url.replace("postgres://", "postgresql://", 1)
+            
         pool = await asyncpg.create_pool(
-            dsn=DATABASE_URL,
+            dsn=fixed_url,
             min_size=1,
-            max_size=4, 
-            ssl="require" 
+            max_size=4,
+            ssl="require"
         )
 
     # create table if not exists

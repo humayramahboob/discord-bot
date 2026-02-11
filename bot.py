@@ -253,7 +253,7 @@ class SeasonalView(discord.ui.View):
         self.season = select.values[0]
         self.page = 0
         self.preview_mode = False
-        self.data = get_seasonal_anime(self.season, self.year)
+        self.data = await get_seasonal_anime(self.season, self.year)
         self.update_controls()
         await interaction.response.edit_message(embed=self.build_list_embed(), view=self)
 

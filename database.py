@@ -20,7 +20,8 @@ async def init_db():
             dsn=fixed_url,
             min_size=1,
             max_size=4,
-            ssl="require"
+            ssl="require",
+            statement_cache_size=0
         )
 
     # create table if not exists

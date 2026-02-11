@@ -69,7 +69,7 @@ bot = MyBot()
 
 @bot.event
 async def on_ready():
-    await init_db_pool()
+    await init_db()
     print(f"Logged in as {bot.user}")
 
 GOJO_GIF_URL = "https://giphy.com/gifs/jujutsu-kaisen-kilianirl-WDH0KOD68mVzqTrfFr"
@@ -97,14 +97,11 @@ class ListView(discord.ui.View):
 
     def get_filtered(self):
         return [r for r in self.rows if r[3] == self.status]
-
     def max_pages(self):
         return max(1, math.ceil(len(self.get_filtered()) / ITEMS_PER_PAGE))
-
     def page_rows(self):
         start = self.page * ITEMS_PER_PAGE
         return self.get_filtered()[start:start + ITEMS_PER_PAGE]
-
     def build_list_embed(self):
         items = [f"**{n}** (`{a}`) → Ep {e}" for n, a, e, _ in self.page_rows()]
         embed = discord.Embed(
@@ -114,12 +111,10 @@ class ListView(discord.ui.View):
         )
         embed.set_footer(text=f"Page {self.page + 1}/{self.max_pages()}")
         return embed
-
     async def build_preview_embed(self):
         rows = self.page_rows()
         if not rows:
             return discord.Embed(title="Preview", description="No anime to preview.", color=0x9b59b6)
-
         name, alias, ep, _ = rows[self.preview_index]
         prog = await get_progress(self.owner.id, alias)
         if not prog:
@@ -351,23 +346,39 @@ async def watched(interaction: discord.Interaction, identifier: str, episode: in
     await update_progress(interaction.user.id, anime_id, new_ep)
     await interaction.response.send_message(f"✅ `{name}` → Episode {new_ep}.")
 
-@bot.tree.command(name="mark", description="Change watching status")
-async def mark(interaction: discord.Interaction, identifier:str, status:str):
-    if status.lower() not in ("watching","completed","paused","dropped"):
-        return await interaction.response.send_message("❌ Invalid status.",ephemeral=True)
-    if not await get_progress(interaction.user.id,identifier):
-        return await interaction.response.send_message("❌ Not tracking this anime.",ephemeral=True)
-    await update_status(interaction.user.id,identifier,status.lower())
-    await interaction.response.send_message(f"✅ `{identifier}` marked as **{status.title()}**.")
+STATUS_CHOICES = [
+    app_commands.Choice(name="Watching", value="watching"),
+    app_commands.Choice(name="Watched", value="watched"),
+    app_commands.Choice(name="Want to Watch", value="want_to_watch"),
+]
 
+@bot.tree.command(name="mark", description="Change watching status")
+@app_commands.describe(identifier="The alias of the anime to update")
+@app_commands.choices(status=STATUS_CHOICES)
+async def mark(interaction: discord.Interaction, identifier: str, status: str):
+    # Defer the response
+    await interaction.response.defer(ephemeral=True)
+
+    # Get anime progress
+    prog = await get_progress(interaction.user.id, identifier)
+    if not prog:
+        return await interaction.followup.send("❌ Not tracking this anime.")
+
+    name, _, _, anime_id, _ = prog
+
+    # Update status
+    await update_status(interaction.user.id, anime_id, status)
+
+    # Send confirmation
+    await interaction.followup.send(f"✅ `{name}` marked as **{status.replace('_',' ').title()}**.")
 
 @bot.tree.command(name="untrack", description="Stop tracking an anime")
-async def untrack(interaction: discord.Interaction, identifier:str):
-    if not await get_progress(interaction.user.id,identifier):
-        return await interaction.response.send_message("❌ Not tracking this anime.",ephemeral=True)
-    await remove_anime(interaction.user.id,identifier)
-    await interaction.response.send_message(f"🗑️ Stopped tracking `{identifier}`.")
-
+async def untrack(interaction: discord.Interaction, identifier: str):
+    if not (prog := await get_progress(interaction.user.id, identifier)):
+        return await interaction.response.send_message("❌ Not tracking this anime.", ephemeral=True)
+    name, _, _, anime_id, _ = prog
+    await remove_anime(interaction.user.id, anime_id)
+    await interaction.response.send_message(f"🗑️ Stopped tracking `{name}`.")
 
 @bot.tree.command(name="seasonal", description="Browse seasonal anime")
 async def seasonal(interaction: discord.Interaction, year: int = None):
@@ -389,9 +400,10 @@ async def change_alias(interaction: discord.Interaction, identifier:str, new_ali
 
 # ---------------- AUTOCOMPLETE ----------------
 async def alias_autocomplete(interaction: discord.Interaction, current: str):
+    aliases = await get_aliases(interaction.user.id)
     return [
         app_commands.Choice(name=a, value=a)
-        for a in get_aliases(interaction.user.id)
+        for a in aliases
         if current.lower() in a.lower()
     ][:25]
 

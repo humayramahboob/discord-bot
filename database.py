@@ -2,34 +2,25 @@
 import os
 import asyncpg
 
+# ---------------- GLOBAL POOL ----------------
+pool: asyncpg.pool.Pool | None = None
 DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
     raise RuntimeError("DATABASE_URL is not set")
 
-# ---------------- ASYNC CONNECTION POOL ----------------
-pool: asyncpg.pool.Pool | None = None
 
-async def init_db_pool():
-    """Initialize the asyncpg pool. Call this once at bot startup."""
+# ---------------- INIT POOL & TABLE ----------------
+async def init_db():
     global pool
     if pool is None:
-        pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=10)
-        await init_db()  # create table if not exists
+        pool = await asyncpg.create_pool(
+            dsn=DATABASE_URL,
+            min_size=1,
+            max_size=10,
+            timeout=5
+        )
 
-async def get_conn():
-    """Get a connection from the pool."""
-    if pool is None:
-        raise RuntimeError("DB pool not initialized. Call init_db_pool() first.")
-    return pool.acquire()
-
-async def release_conn(conn):
-    """Release a connection back to the pool."""
-    if pool is None:
-        return
-    await pool.release(conn)
-
-# ---------------- INIT TABLE ----------------
-async def init_db():
+    # create table if not exists
     async with pool.acquire() as conn:
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS tracked_anime (
@@ -44,14 +35,24 @@ async def init_db():
             )
         """)
 
+
+# ---------------- CONNECTION HELPER ----------------
+async def get_conn():
+    if pool is None:
+        raise RuntimeError("DB pool not initialized. Call init_db() first.")
+    return pool
+
+
 # ---------------- ADD ----------------
 async def add_anime(user_id, anime_id, anime_name, alias, episode=0, status="watching"):
     async with pool.acquire() as conn:
         await conn.execute("""
-            INSERT INTO tracked_anime (user_id, anime_id, anime_name, alias, last_watched, last_notified, status)
+            INSERT INTO tracked_anime
+            (user_id, anime_id, anime_name, alias, last_watched, last_notified, status)
             VALUES ($1, $2, $3, $4, $5, $5, $6)
             ON CONFLICT (user_id, anime_id) DO NOTHING
         """, user_id, anime_id, anime_name, alias, episode, status)
+
 
 # ---------------- UPDATE ----------------
 async def update_progress(user_id, anime_id, episode):
@@ -62,6 +63,7 @@ async def update_progress(user_id, anime_id, episode):
             WHERE user_id = $2 AND anime_id = $3
         """, episode, user_id, anime_id)
 
+
 async def update_status(user_id, anime_id, status):
     async with pool.acquire() as conn:
         await conn.execute("""
@@ -69,6 +71,7 @@ async def update_status(user_id, anime_id, status):
             SET status = $1
             WHERE user_id = $2 AND anime_id = $3
         """, status, user_id, anime_id)
+
 
 async def update_last_notified(user_id, anime_id, episode):
     async with pool.acquire() as conn:
@@ -78,6 +81,7 @@ async def update_last_notified(user_id, anime_id, episode):
             WHERE user_id = $2 AND anime_id = $3
         """, episode, user_id, anime_id)
 
+
 async def update_alias(user_id, anime_id, new_alias):
     async with pool.acquire() as conn:
         await conn.execute("""
@@ -85,6 +89,7 @@ async def update_alias(user_id, anime_id, new_alias):
             SET alias = $1
             WHERE user_id = $2 AND anime_id = $3
         """, new_alias, user_id, anime_id)
+
 
 # ---------------- GET ----------------
 async def get_progress(user_id, identifier):
@@ -97,6 +102,7 @@ async def get_progress(user_id, identifier):
         """, user_id, identifier)
         return row
 
+
 async def list_tracked(user_id):
     async with pool.acquire() as conn:
         rows = await conn.fetch("""
@@ -107,10 +113,12 @@ async def list_tracked(user_id):
         """, user_id)
         return rows
 
+
 async def get_aliases(user_id):
     async with pool.acquire() as conn:
         rows = await conn.fetch("SELECT alias FROM tracked_anime WHERE user_id = $1", user_id)
         return [r["alias"] for r in rows]
+
 
 async def get_all_tracked():
     async with pool.acquire() as conn:
@@ -119,6 +127,7 @@ async def get_all_tracked():
             FROM tracked_anime
         """)
         return rows
+
 
 # ---------------- DELETE ----------------
 async def remove_anime(user_id, anime_id):

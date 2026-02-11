@@ -3,29 +3,21 @@ from discord import app_commands
 from discord.ext import commands, tasks
 import os
 import math
-import asyncio
-from functools import lru_cache
 from dotenv import load_dotenv
 from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 from keep_alive import keep_alive
-from database import init_db
+from database import *
+from anilist import *
 
-from database import (
-    add_anime, update_progress, update_status, get_progress, 
-    list_tracked, get_aliases, get_all_tracked, 
-    update_last_notified, remove_anime, update_alias
-)
-from anilist import search_anime, search_anime_by_id, get_seasonal_anime
 
 # ---------------- CONFIGURATION ----------------
 load_dotenv()
-TOKEN = os.getenv("DISCORD_TOKEN")
-GUILD_ID = int(os.getenv("GUILD_ID"))
-raw_role_id = os.getenv("ALERT_ROLE_ID")
-ALERT_ROLE_ID = int(raw_role_id) if raw_role_id and raw_role_id.strip() else None
-TIMEZONE = os.getenv("TIMEZONE", "America/New_York")
-ITEMS_PER_PAGE = 10
+TOKEN=os.getenv("DISCORD_TOKEN")
+GUILD_ID=int(os.getenv("GUILD_ID"))
+ALERT_ROLE_ID=int(os.getenv("ALERT_ROLE_ID") or 0) or None
+TIMEZONE=os.getenv("TIMEZONE","America/New_York"); ITEMS_PER_PAGE=10
+
 
 GENRE_EMOJIS = {
     "Action": "⚔️", "Adventure": "🗺️", "Comedy": "😂", "Drama": "🎭",
@@ -36,36 +28,38 @@ GENRE_EMOJIS = {
 SEASONS = ["WINTER", "SPRING", "SUMMER", "FALL"]
 
 # Cache AniList lookups for 10 minutes to reduce API latency
-@lru_cache(maxsize=128)
-def cached_search_id(anime_id):
-    return search_anime_by_id(anime_id)
+anime_cache = {}
+CACHE_TTL = 600  # 10 minutes
+
+async def cached_search_id(anime_id):
+    now=datetime.now().timestamp()
+    if (c:=anime_cache.get(anime_id)) and now-c[1]<CACHE_TTL:
+        return c[0]
+    data=await search_anime_by_id(anime_id)
+    anime_cache[anime_id]=(data,now)
+    return data
 
 def current_season_year():
-    now = datetime.now(ZoneInfo(TIMEZONE))
-    m = now.month
-    if m <= 3: return "WINTER", now.year
-    elif m <= 6: return "SPRING", now.year
-    elif m <= 9: return "SUMMER", now.year
-    else: return "FALL", now.year
+    now=datetime.now(ZoneInfo(TIMEZONE))
+    m,y=now.month,now.year
+    return ("WINTER",y) if m<=3 else ("SPRING",y) if m<=6 else ("SUMMER",y) if m<=9 else ("FALL",y)
 
-def format_genres(genres):
-    return " ".join([GENRE_EMOJIS[g] for g in genres if g in GENRE_EMOJIS])
+def format_genres(genres): return " ".join(GENRE_EMOJIS[g] for g in genres if g in GENRE_EMOJIS)
+
 
 # ---------------- BOT SETUP ----------------
 class MyBot(commands.Bot):
     def __init__(self):
-        intents = discord.Intents.default()
-        intents.members = True 
-        intents.message_content = True
-        super().__init__(command_prefix="!", intents=intents)
+        intents=discord.Intents.default()
+        intents.members=intents.message_content=True
+        super().__init__(command_prefix="!",intents=intents)
 
     async def setup_hook(self):
-        guild = discord.Object(id=GUILD_ID)
+        guild=discord.Object(id=GUILD_ID)
         self.tree.copy_global_to(guild=guild)
         await self.tree.sync(guild=guild)
-        if not check_new_episodes.is_running():
-            check_new_episodes.start()
-        print(f"✅ Bot is synced and background tasks started.")
+        if not check_new_episodes.is_running(): check_new_episodes.start()
+        print("✅ Bot synced.")
 
 bot = MyBot()
 
@@ -78,15 +72,11 @@ GOJO_GIF_URL = "https://giphy.com/gifs/jujutsu-kaisen-kilianirl-WDH0KOD68mVzqTrf
 
 @bot.event
 async def on_message(message):
-    if message.author == bot.user:
-        return
-
-    content = message.content.lower()
-    if "gojo" in content:
-        await message.channel.send(f"I'm right here bbg\n{GOJO_GIF_URL}")
+    if message.author==bot.user: return
+    c=message.content.lower()
+    if "gojo" in c: await message.channel.send(f"I'm right here bbg\n{GOJO_GIF_URL}")
     elif bot.user in message.mentions:
         await message.channel.send(f"Yes, {message.author.mention}? You summoned me?")
-
     await bot.process_commands(message)
 
 # ---------------- UI COMPONENTS ----------------
@@ -132,7 +122,7 @@ class ListView(discord.ui.View):
             return discord.Embed(title="Preview", description=f"Not tracking {name}.", color=0x9b59b6)
 
         # Use cached ID search for speed
-        data = cached_search_id(prog[3])
+        data = await cached_search_id(prog[3])
         embed = discord.Embed(title=f"📺 {name}", description=f"Episode {ep}", color=0x5865F2)
         if data and data.get("coverImage", {}).get("large"):
             embed.set_image(url=data["coverImage"]["large"])
@@ -190,7 +180,7 @@ class ListView(discord.ui.View):
         await interaction.response.edit_message(embed=embed, view=self)
 
 class SeasonalView(discord.ui.View):
-    def __init__(self, user_id, season, year):
+    def __init__(self, user_id, season, year, data):
         super().__init__(timeout=180)
         self.user_id = user_id
         self.season = season
@@ -198,8 +188,12 @@ class SeasonalView(discord.ui.View):
         self.page = 0
         self.preview_mode = False
         self.preview_index = 0
-        self.data = get_seasonal_anime(season, year)
-        self.tracked_ids = {uid[1] for uid in get_all_tracked() if uid[0] == user_id}
+        self.data = data
+
+        self.tracked_ids = {
+            uid[1] for uid in get_all_tracked() if uid[0] == user_id
+        }
+
         self.update_controls()
 
     def max_pages(self):
@@ -291,153 +285,136 @@ class SeasonalView(discord.ui.View):
 # ---------------- COMMANDS ----------------
 
 @bot.tree.command(name="list", description="View a user's tracked anime")
-async def list_cmd(interaction: discord.Interaction, user: discord.User = None):
-    target = user or interaction.user
-    rows = list_tracked(target.id)
-    if not rows:
-        return await interaction.response.send_message("No tracked anime.")
-    view = ListView(target, rows)
-    await interaction.response.send_message(embed=view.build_list_embed(), view=view)
+async def list_cmd(interaction: discord.Interaction, user: discord.User=None):
+    await interaction.response.defer()
+    target=user or interaction.user
+    if not (rows:=list_tracked(target.id)):
+        return await interaction.followup.send("No tracked anime.")
+    view=ListView(target,rows)
+    await interaction.followup.send(embed=view.build_list_embed(),view=view)
+
 
 @bot.tree.command(name="progress", description="Check detailed progress for an anime")
-async def progress(interaction: discord.Interaction, identifier: str):
-    prog = get_progress(interaction.user.id, identifier)
-    if not prog:
-        return await interaction.response.send_message(f"❌ Not tracking '{identifier}'.", ephemeral=True)
+async def progress(interaction: discord.Interaction, identifier:str):
+    await interaction.response.defer()
+    if not (prog:=get_progress(interaction.user.id,identifier)):
+        return await interaction.followup.send(f"❌ Not tracking '{identifier}'.",ephemeral=True)
 
-    name, alias, last_watched, anime_id, status = prog
-    data = cached_search_id(anime_id)
-    if not data:
-        return await interaction.response.send_message("❌ AniList error.", ephemeral=True)
+    name,alias,last_watched,anime_id,status=prog
+    if not (data:=await cached_search_id(anime_id)):
+        return await interaction.followup.send("❌ AniList error.",ephemeral=True)
 
-    embed = discord.Embed(title=f"📺 {name} ({alias})", description=(data.get("description") or "No description.")[:1000], color=0x3498db)
-    embed.add_field(name="Progress", value=f"**Status:** {status.title()}\n**Watched:** Ep {last_watched}", inline=False)
-    
-    if data.get("episodes"):
-        embed.add_field(name="Total", value=str(data["episodes"]), inline=True)
-    
-    genres = format_genres(data.get("genres", []))
-    if genres:
-        embed.add_field(name="Genres", value=genres, inline=True)
-
-    next_ep = data.get("nextAiringEpisode")
-    if next_ep:
-        ts = datetime.fromtimestamp(next_ep["airingAt"], tz=timezone.utc).astimezone(ZoneInfo(TIMEZONE))
-        embed.add_field(name="Next Episode", value=f"Ep {next_ep['episode']} — {ts.strftime('%Y-%m-%d %H:%M')}", inline=False)
-
-    if data.get("coverImage", {}).get("large"):
-        embed.set_thumbnail(url=data["coverImage"]["large"])
-
-    await interaction.response.send_message(embed=embed)
-
-@bot.tree.command(name="track", description="Start tracking a new anime")
-async def track(interaction: discord.Interaction, anime: str, alias: str = None, episode: int = 0):
-    await interaction.response.defer() # Search takes time
-    data = search_anime(anime)
-    if not data:
-        return await interaction.followup.send("❌ Anime not found.")
-
-    title = data["title"]["romaji"]
-    final_alias = alias or "".join([w[0] for w in title.split() if w]).upper()
-    add_anime(interaction.user.id, data["id"], title, final_alias, episode, "watching")
-
-    embed = discord.Embed(title=f"✅ Tracking {title}", color=0x1abc9c)
-    embed.add_field(name="Alias", value=f"`{final_alias}`", inline=True)
-    embed.set_thumbnail(url=data.get("coverImage", {}).get("large"))
+    embed=discord.Embed(
+        title=f"📺 {name} ({alias})",
+        description=(data.get("description") or "No description.")[:1000],
+        color=0x3498db
+    )
+    embed.add_field(name="Progress",value=f"**Status:** {status.title()}\n**Watched:** Ep {last_watched}",inline=False)
+    if eps:=data.get("episodes"): embed.add_field(name="Total",value=str(eps),inline=True)
+    if genres:=format_genres(data.get("genres",[])): embed.add_field(name="Genres",value=genres,inline=True)
+    if next_ep:=data.get("nextAiringEpisode"):
+        ts=datetime.fromtimestamp(next_ep["airingAt"],tz=timezone.utc).astimezone(ZoneInfo(TIMEZONE))
+        embed.add_field(name="Next Episode",value=f"Ep {next_ep['episode']} — {ts.strftime('%Y-%m-%d %H:%M')}",inline=False)
+    if thumb:=data.get("coverImage",{}).get("large"): embed.set_thumbnail(url=thumb)
     await interaction.followup.send(embed=embed)
 
-@bot.tree.command(name="watched", description="Update progress")
-async def watched(interaction: discord.Interaction, identifier: str, episode: int = None):
-    prog = get_progress(interaction.user.id, identifier)
-    if not prog:
-        return await interaction.response.send_message("❌ Not tracking this anime.", ephemeral=True)
-    
-    new_ep = episode if episode is not None else prog[2] + 1
-    update_progress(interaction.user.id, prog[3], new_ep)
-    await interaction.response.send_message(f"✅ **{prog[0]}** updated to episode **{new_ep}**.")
 
-@bot.tree.command(name="mark", description="Update status")
-@app_commands.choices(status=[
-    app_commands.Choice(name="Watching", value="watching"),
-    app_commands.Choice(name="Watched", value="watched"),
-    app_commands.Choice(name="Want to Watch", value="want_to_watch"),
-])
-async def mark(interaction: discord.Interaction, identifier: str, status: app_commands.Choice[str]):
-    prog = get_progress(interaction.user.id, identifier)
-    if not prog: return await interaction.response.send_message("❌ Not tracking.", ephemeral=True)
-    update_status(interaction.user.id, prog[3], status.value)
-    await interaction.response.send_message(f"✅ **{prog[0]}** marked as **{status.name}**.")
+@bot.tree.command(name="track", description="Start tracking a new anime")
+async def track(interaction: discord.Interaction, anime:str, alias:str=None, episode:int=0):
+    await interaction.response.defer()
+    if not (data:=await search_anime(anime)):
+        return await interaction.followup.send("❌ Anime not found.",ephemeral=True)
+    title=data["title"]["romaji"]
+    final_alias=alias or "".join(w[0] for w in title.split() if w).upper()
+    add_anime(interaction.user.id,data["id"],title,final_alias,episode,"watching")
+    embed=discord.Embed(title=f"✅ Tracking {title}",color=0x1abc9c)
+    embed.add_field(name="Alias",value=f"`{final_alias}`",inline=True)
+    if thumb:=data.get("coverImage",{}).get("large"): embed.set_thumbnail(url=thumb)
+    await interaction.followup.send(embed=embed)
 
-@bot.tree.command(name="untrack", description="Remove an anime")
-async def untrack(interaction: discord.Interaction, identifier: str):
-    prog = get_progress(interaction.user.id, identifier)
-    if not prog: return await interaction.response.send_message("❌ Not tracking.", ephemeral=True)
-    remove_anime(interaction.user.id, prog[3])
-    await interaction.response.send_message(f"🗑️ Removed **{prog[0]}**.")
+
+@bot.tree.command(name="watched", description="Update episode progress")
+async def watched(interaction: discord.Interaction, identifier:str, episode:int):
+    if not get_progress(interaction.user.id,identifier):
+        return await interaction.response.send_message("❌ Not tracking this anime.",ephemeral=True)
+    update_progress(interaction.user.id,identifier,episode)
+    await interaction.response.send_message(f"✅ Updated `{identifier}` to episode {episode}.")
+
+
+@bot.tree.command(name="mark", description="Change watching status")
+async def mark(interaction: discord.Interaction, identifier:str, status:str):
+    if status.lower() not in ("watching","completed","paused","dropped"):
+        return await interaction.response.send_message("❌ Invalid status.",ephemeral=True)
+    if not get_progress(interaction.user.id,identifier):
+        return await interaction.response.send_message("❌ Not tracking this anime.",ephemeral=True)
+    update_status(interaction.user.id,identifier,status.lower())
+    await interaction.response.send_message(f"✅ `{identifier}` marked as **{status.title()}**.")
+
+
+@bot.tree.command(name="untrack", description="Stop tracking an anime")
+async def untrack(interaction: discord.Interaction, identifier:str):
+    if not get_progress(interaction.user.id,identifier):
+        return await interaction.response.send_message("❌ Not tracking this anime.",ephemeral=True)
+    remove_anime(interaction.user.id,identifier)
+    await interaction.response.send_message(f"🗑️ Stopped tracking `{identifier}`.")
+
 
 @bot.tree.command(name="seasonal", description="Browse seasonal anime")
-async def seasonal(interaction: discord.Interaction, year: int = None):
-    season, d_year = current_season_year()
-    view = SeasonalView(interaction.user.id, season, year or d_year)
-    await interaction.response.send_message(embed=view.build_list_embed(), view=view)
+async def seasonal(interaction: discord.Interaction, year:int=None):
+    await interaction.response.defer()
+    season,d_year=current_season_year()
+    data=await get_seasonal_anime(season,year or d_year)
+    view=SeasonalView(interaction.user.id,season,year or d_year,data)
+    await interaction.followup.send(embed=view.build_list_embed(),view=view)
+
 
 @bot.tree.command(name="alias", description="Change the alias for a tracked anime")
-async def change_alias(interaction: discord.Interaction, identifier: str, new_alias: str):
-    prog = get_progress(interaction.user.id, identifier)
-    if not prog: return await interaction.response.send_message("❌ Not tracking.", ephemeral=True)
-    update_alias(interaction.user.id, prog[3], new_alias)
+async def change_alias(interaction: discord.Interaction, identifier:str, new_alias:str):
+    if not (prog:=get_progress(interaction.user.id,identifier)):
+        return await interaction.response.send_message("❌ Not tracking.",ephemeral=True)
+    update_alias(interaction.user.id,prog[3],new_alias)
     await interaction.response.send_message(f"✏️ **{prog[0]}** alias: `{prog[1]}` → `{new_alias}`")
 
 # ---------------- AUTOCOMPLETE ----------------
-async def alias_autocomplete(interaction: discord.Interaction, current: str):
-    aliases = get_aliases(interaction.user.id)
-    return [app_commands.Choice(name=a, value=a) for a in aliases if current.lower() in a.lower()][:25]
+async def alias_autocomplete(interaction: discord.Interaction, current:str):
+    try:
+        return [app_commands.Choice(name=a,value=a)
+                for a in get_aliases(interaction.user.id)
+                if current.lower() in a.lower()][:25]
+    except Exception as e:
+        print("Autocomplete error:",e)
+        return []
 
-watched.autocomplete("identifier")(alias_autocomplete)
-mark.autocomplete("identifier")(alias_autocomplete)
-untrack.autocomplete("identifier")(alias_autocomplete)
-change_alias.autocomplete("identifier")(alias_autocomplete)
-progress.autocomplete("identifier")(alias_autocomplete)
+for cmd in (watched,mark,untrack,change_alias,progress):
+    cmd.autocomplete("identifier")(alias_autocomplete)
 
 # ---------------- BACKGROUND TASK ----------------
 @tasks.loop(minutes=10)
 async def check_new_episodes():
     try:
-        now_utc = datetime.now(timezone.utc)
-        guild = bot.get_guild(GUILD_ID)
-        if not guild: return
+        now=datetime.now(timezone.utc)
+        if not (guild:=bot.get_guild(GUILD_ID)): return
+        channel=next((c for c in guild.text_channels if c.permissions_for(guild.me).send_messages),None)
 
-        # Find first viable channel
-        target_channel = next((ch for ch in guild.text_channels if ch.permissions_for(guild.me).send_messages), None)
-        tracked = get_all_tracked()
+        for user_id,anime_id,_,last_notified in get_all_tracked():
+            if not (data:=await cached_search_id(anime_id)): continue
+            if not (ep:=data.get("nextAiringEpisode")): continue
+            if ep["episode"] <= (last_notified or 0): continue
 
-        for user_id, anime_id, _, last_notified in tracked:
-            data = cached_search_id(anime_id)
-            if not data or not data.get("nextAiringEpisode"): continue
-            
-            ep_info = data["nextAiringEpisode"]
-            if ep_info["episode"] <= (last_notified or 0): continue
+            airing=datetime.fromtimestamp(ep["airingAt"],tz=timezone.utc)
+            if now+timedelta(minutes=30) < airing: continue
+            if not (member:=guild.get_member(user_id)): continue
+            if ALERT_ROLE_ID and (not (role:=guild.get_role(ALERT_ROLE_ID)) or role not in member.roles): continue
 
-            airing_at = datetime.fromtimestamp(ep_info["airingAt"], tz=timezone.utc)
-            if now_utc + timedelta(minutes=30) < airing_at: continue
-
-            member = guild.get_member(user_id)
-            if not member: continue
-
-            if ALERT_ROLE_ID:
-                role = guild.get_role(ALERT_ROLE_ID)
-                if not role or role not in member.roles: continue
-
-            title = data["title"]["romaji"]
-            msg = f"{member.mention} 🎉 **{title}** Ep **{ep_info['episode']}** is out!"
-            
-            if target_channel: await target_channel.send(msg)
-            try: await member.send(f"🎉 {title} Ep {ep_info['episode']} is out!")
+            title=data["title"]["romaji"]
+            msg=f"{member.mention} 🎉 **{title}** Ep **{ep['episode']}** is out!"
+            if channel: await channel.send(msg)
+            try: await member.send(f"🎉 {title} Ep {ep['episode']} is out!")
             except: pass
-
-            update_last_notified(user_id, anime_id, ep_info["episode"])
+            update_last_notified(user_id,anime_id,ep["episode"])
     except Exception as e:
         print(f"Loop Error: {e}")
+
 
 keep_alive()
 bot.run(TOKEN)

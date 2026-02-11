@@ -1,23 +1,21 @@
-# database.py
 import os
 import asyncpg
 
-# ---------------- GLOBAL POOL ----------------
-pool: asyncpg.pool.Pool | None = None
 DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
     raise RuntimeError("DATABASE_URL is not set")
 
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
-# ---------------- INIT POOL & TABLE ----------------
 async def init_db():
     global pool
     if pool is None:
         pool = await asyncpg.create_pool(
             dsn=DATABASE_URL,
             min_size=1,
-            max_size=10,
-            timeout=5
+            max_size=4, 
+            ssl="require" 
         )
 
     # create table if not exists

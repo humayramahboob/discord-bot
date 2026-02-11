@@ -5,21 +5,15 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
     raise RuntimeError("DATABASE_URL is not set")
 
-if DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
-
 pool = None
 async def init_db():
     global pool 
     if pool is None:
-        fixed_url = DATABASE_URL
-        if fixed_url.startswith("postgres://"):
-            fixed_url = fixed_url.replace("postgres://", "postgresql://", 1)
-            
         pool = await asyncpg.create_pool(
-            dsn=fixed_url,
+            dsn=DATABASE_URL,
             min_size=1,
             max_size=4,
+            timeout=10, 
             ssl="require",
             statement_cache_size=0
         )

@@ -58,6 +58,11 @@ class MyBot(commands.Bot):
         await init_db() 
         print("✅ Database pool initialized.")
 
+        db_pool = await get_conn()
+        async with db_pool.acquire() as conn:
+            await conn.execute("SELECT 1;")
+            print("✅ Database connection test successful!")
+
         guild = discord.Object(id=GUILD_ID)
         self.tree.copy_global_to(guild=guild)
         for name in ("watched", "mark", "untrack", "change_alias", "progress"):

@@ -50,26 +50,29 @@ def format_genres(genres): return " ".join(GENRE_EMOJIS[g] for g in genres if g 
 # ---------------- BOT SETUP ----------------
 class MyBot(commands.Bot):
     def __init__(self):
-        intents=discord.Intents.default()
-        intents.members=intents.message_content=True
-        super().__init__(command_prefix="!",intents=intents)
+        intents = discord.Intents.default()
+        intents.members = intents.message_content = True
+        super().__init__(command_prefix="!", intents=intents)
 
     async def setup_hook(self):
-        guild=discord.Object(id=GUILD_ID)
+        await init_db() 
+        print("✅ Database pool initialized.")
+
+        guild = discord.Object(id=GUILD_ID)
         self.tree.copy_global_to(guild=guild)
         for name in ("watched", "mark", "untrack", "change_alias", "progress"):
             cmd = self.tree.get_command(name)
             if cmd:
                 cmd.autocomplete("identifier")(alias_autocomplete)
         await self.tree.sync(guild=guild)
-        if not check_new_episodes.is_running(): check_new_episodes.start()
-        print("✅ Bot synced.")
-
+        
+        if not check_new_episodes.is_running(): 
+            check_new_episodes.start()
+        print("✅ Bot synced and tasks started.")
 bot = MyBot()
 
 @bot.event
 async def on_ready():
-    await init_db()
     print(f"Logged in as {bot.user}")
 
 GOJO_GIF_URL = "https://giphy.com/gifs/jujutsu-kaisen-kilianirl-WDH0KOD68mVzqTrfFr"
@@ -290,13 +293,14 @@ class SeasonalView(discord.ui.View):
 # ---------------- COMMANDS ----------------
 
 @bot.tree.command(name="list", description="View a user's tracked anime")
-async def list_cmd(interaction: discord.Interaction, user: discord.User=None):
-    await interaction.response.defer()
-    target=user or interaction.user
-    if not (rows:=await list_tracked(target.id)):
+async def list_cmd(interaction: discord.Interaction, user: discord.User = None):
+    await interaction.response.defer() 
+    target = user or interaction.user
+    rows = await list_tracked(target.id)
+    if not rows:
         return await interaction.followup.send("No tracked anime.")
-    view=ListView(target,rows)
-    await interaction.followup.send(embed=view.build_list_embed(),view=view)
+    view = ListView(target, rows)
+    await interaction.followup.send(embed=view.build_list_embed(), view=view)
 
 
 @bot.tree.command(name="progress", description="Check detailed progress for an anime")

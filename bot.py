@@ -69,7 +69,7 @@ bot = MyBot()
 
 @bot.event
 async def on_ready():
-    init_db()
+    await init_db_pool()
     print(f"Logged in as {bot.user}")
 
 GOJO_GIF_URL = "https://giphy.com/gifs/jujutsu-kaisen-kilianirl-WDH0KOD68mVzqTrfFr"

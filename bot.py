@@ -193,11 +193,8 @@ class SeasonalView(discord.ui.View):
         self.preview_mode = False
         self.preview_index = 0
         self.data = data
-
-        self.tracked_ids = {
-            uid[1] for uid in get_all_tracked() if uid[0] == user_id
-        }
-
+        all_tracked = get_all_tracked()  # <- single DB call
+        self.tracked_ids = {uid[1] for uid in all_tracked if uid[0] == user_id}
         self.update_controls()
 
     def max_pages(self):

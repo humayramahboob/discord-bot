@@ -57,6 +57,10 @@ class MyBot(commands.Bot):
     async def setup_hook(self):
         guild=discord.Object(id=GUILD_ID)
         self.tree.copy_global_to(guild=guild)
+        for name in ("watched", "mark", "untrack", "change_alias", "progress"):
+            cmd = self.tree.get_command(name)
+            if cmd:
+                cmd.autocomplete("identifier")(alias_autocomplete)
         await self.tree.sync(guild=guild)
         if not check_new_episodes.is_running(): check_new_episodes.start()
         print("✅ Bot synced.")
@@ -334,12 +338,16 @@ async def track(interaction: discord.Interaction, anime:str, alias:str=None, epi
 
 
 @bot.tree.command(name="watched", description="Update episode progress")
-async def watched(interaction: discord.Interaction, identifier:str, episode:int):
-    if not get_progress(interaction.user.id,identifier):
-        return await interaction.response.send_message("❌ Not tracking this anime.",ephemeral=True)
-    update_progress(interaction.user.id,identifier,episode)
-    await interaction.response.send_message(f"✅ Updated `{identifier}` to episode {episode}.")
+async def watched(interaction: discord.Interaction, identifier: str, episode: int | None = None):
+    prog = get_progress(interaction.user.id, identifier)
+    if not prog:
+        return await interaction.response.send_message("❌ Not tracking this anime.", ephemeral=True)
 
+    name, _, last, anime_id, _ = prog
+    new_ep = episode or (last + 1)
+
+    update_progress(interaction.user.id, anime_id, new_ep)
+    await interaction.response.send_message(f"✅ `{name}` → Episode {new_ep}.")
 
 @bot.tree.command(name="mark", description="Change watching status")
 async def mark(interaction: discord.Interaction, identifier:str, status:str):
@@ -376,17 +384,12 @@ async def change_alias(interaction: discord.Interaction, identifier:str, new_ali
     await interaction.response.send_message(f"✏️ **{prog[0]}** alias: `{prog[1]}` → `{new_alias}`")
 
 # ---------------- AUTOCOMPLETE ----------------
-async def alias_autocomplete(interaction: discord.Interaction, current:str):
-    try:
-        return [app_commands.Choice(name=a,value=a)
-                for a in get_aliases(interaction.user.id)
-                if current.lower() in a.lower()][:25]
-    except Exception as e:
-        print("Autocomplete error:",e)
-        return []
-
-for cmd in (watched,mark,untrack,change_alias,progress):
-    cmd.autocomplete("identifier")(alias_autocomplete)
+async def alias_autocomplete(interaction: discord.Interaction, current: str):
+    return [
+        app_commands.Choice(name=a, value=a)
+        for a in get_aliases(interaction.user.id)
+        if current.lower() in a.lower()
+    ][:25]
 
 # ---------------- BACKGROUND TASK ----------------
 @tasks.loop(minutes=10)

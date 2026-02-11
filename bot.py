@@ -29,7 +29,7 @@ SEASONS = ["WINTER", "SPRING", "SUMMER", "FALL"]
 
 # Cache AniList lookups for 10 minutes to reduce API latency
 anime_cache = {}
-CACHE_TTL = 600  # 10 minutes
+CACHE_TTL = 600 
 
 async def cached_search_id(anime_id):
     now=datetime.now().timestamp()

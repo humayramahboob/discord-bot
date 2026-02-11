@@ -1,148 +1,135 @@
+# database.py
 import os
-import psycopg2
+import asyncpg
+from contextlib import asynccontextmanager
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
     raise RuntimeError("DATABASE_URL is not set")
 
+# ---------------- CONNECTION POOL ----------------
+pool: asyncpg.pool.Pool = None
 
-# ---------------- CONNECTION ----------------
-def get_conn():
-    return psycopg2.connect(
-        DATABASE_URL,
-        sslmode="require",
-        connect_timeout=15
-    )
+async def init_pool():
+    global pool
+    if pool is None:
+        pool = await asyncpg.create_pool(
+            DATABASE_URL,
+            min_size=1,
+            max_size=10,  # Supabase free tier limit
+            command_timeout=60
+        )
 
+@asynccontextmanager
+async def get_conn():
+    """
+    Async context manager for a pooled connection.
+    Usage:
+        async with get_conn() as conn:
+            await conn.execute("...")
+    """
+    async with pool.acquire() as conn:
+        yield conn
 
 # ---------------- INIT TABLE ----------------
-def init_db():
-    with get_conn() as conn:
-        with conn.cursor() as cursor:
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS tracked_anime (
-                    user_id BIGINT,
-                    anime_id INTEGER,
-                    anime_name TEXT,
-                    alias TEXT,
-                    last_watched INTEGER DEFAULT 0,
-                    last_notified INTEGER DEFAULT 0,
-                    status TEXT DEFAULT 'watching',
-                    PRIMARY KEY (user_id, anime_id)
-                )
-            """)
-        conn.commit()
-
+async def init_db():
+    async with get_conn() as conn:
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS tracked_anime (
+                user_id BIGINT,
+                anime_id INTEGER,
+                anime_name TEXT,
+                alias TEXT,
+                last_watched INTEGER DEFAULT 0,
+                last_notified INTEGER DEFAULT 0,
+                status TEXT DEFAULT 'watching',
+                PRIMARY KEY (user_id, anime_id)
+            )
+        """)
 
 # ---------------- ADD ----------------
-def add_anime(user_id, anime_id, anime_name, alias, episode=0, status="watching"):
-    with get_conn() as conn:
-        with conn.cursor() as cursor:
-            cursor.execute("""
-                INSERT INTO tracked_anime
-                (user_id, anime_id, anime_name, alias, last_watched, last_notified, status)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (user_id, anime_id) DO NOTHING
-            """, (user_id, anime_id, anime_name, alias, episode, episode, status))
-        conn.commit()
-
+async def add_anime(user_id, anime_id, anime_name, alias, episode=0, status="watching"):
+    async with get_conn() as conn:
+        await conn.execute("""
+            INSERT INTO tracked_anime
+            (user_id, anime_id, anime_name, alias, last_watched, last_notified, status)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            ON CONFLICT (user_id, anime_id) DO NOTHING
+        """, user_id, anime_id, anime_name, alias, episode, episode, status)
 
 # ---------------- UPDATE ----------------
-def update_progress(user_id, anime_id, episode):
-    with get_conn() as conn:
-        with conn.cursor() as cursor:
-            cursor.execute("""
-                UPDATE tracked_anime
-                SET last_watched = %s, status = 'watching'
-                WHERE user_id = %s AND anime_id = %s
-            """, (episode, user_id, anime_id))
-        conn.commit()
+async def update_progress(user_id, anime_id, episode):
+    async with get_conn() as conn:
+        await conn.execute("""
+            UPDATE tracked_anime
+            SET last_watched = $1, status = 'watching'
+            WHERE user_id = $2 AND anime_id = $3
+        """, episode, user_id, anime_id)
 
+async def update_status(user_id, anime_id, status):
+    async with get_conn() as conn:
+        await conn.execute("""
+            UPDATE tracked_anime
+            SET status = $1
+            WHERE user_id = $2 AND anime_id = $3
+        """, status, user_id, anime_id)
 
-def update_status(user_id, anime_id, status):
-    with get_conn() as conn:
-        with conn.cursor() as cursor:
-            cursor.execute("""
-                UPDATE tracked_anime
-                SET status = %s
-                WHERE user_id = %s AND anime_id = %s
-            """, (status, user_id, anime_id))
-        conn.commit()
+async def update_last_notified(user_id, anime_id, episode):
+    async with get_conn() as conn:
+        await conn.execute("""
+            UPDATE tracked_anime
+            SET last_notified = $1
+            WHERE user_id = $2 AND anime_id = $3
+        """, episode, user_id, anime_id)
 
-
-def update_last_notified(user_id, anime_id, episode):
-    with get_conn() as conn:
-        with conn.cursor() as cursor:
-            cursor.execute("""
-                UPDATE tracked_anime
-                SET last_notified = %s
-                WHERE user_id = %s AND anime_id = %s
-            """, (episode, user_id, anime_id))
-        conn.commit()
-
-
-def update_alias(user_id, anime_id, new_alias):
-    with get_conn() as conn:
-        with conn.cursor() as cursor:
-            cursor.execute("""
-                UPDATE tracked_anime
-                SET alias = %s
-                WHERE user_id = %s AND anime_id = %s
-            """, (new_alias, user_id, anime_id))
-        conn.commit()
-
+async def update_alias(user_id, anime_id, new_alias):
+    async with get_conn() as conn:
+        await conn.execute("""
+            UPDATE tracked_anime
+            SET alias = $1
+            WHERE user_id = $2 AND anime_id = $3
+        """, new_alias, user_id, anime_id)
 
 # ---------------- GET ----------------
-def get_progress(user_id, identifier):
-    with get_conn() as conn:
-        with conn.cursor() as cursor:
-            cursor.execute("""
-                SELECT anime_name, alias, last_watched, anime_id, status
-                FROM tracked_anime
-                WHERE user_id = %s
-                  AND (alias = %s OR anime_name = %s)
-            """, (user_id, identifier, identifier))
-            return cursor.fetchone()
+async def get_progress(user_id, identifier):
+    async with get_conn() as conn:
+        row = await conn.fetchrow("""
+            SELECT anime_name, alias, last_watched, anime_id, status
+            FROM tracked_anime
+            WHERE user_id = $1
+              AND (alias = $2 OR anime_name = $2)
+        """, user_id, identifier)
+        return row
 
+async def list_tracked(user_id):
+    async with get_conn() as conn:
+        rows = await conn.fetch("""
+            SELECT anime_name, alias, last_watched, status
+            FROM tracked_anime
+            WHERE user_id = $1
+            ORDER BY anime_name
+        """, user_id)
+        return rows
 
-def list_tracked(user_id):
-    with get_conn() as conn:
-        with conn.cursor() as cursor:
-            cursor.execute("""
-                SELECT anime_name, alias, last_watched, status
-                FROM tracked_anime
-                WHERE user_id = %s
-                ORDER BY anime_name
-            """, (user_id,))
-            return cursor.fetchall()
+async def get_aliases(user_id):
+    async with get_conn() as conn:
+        rows = await conn.fetch("""
+            SELECT alias FROM tracked_anime WHERE user_id = $1
+        """, user_id)
+        return [r['alias'] for r in rows]
 
-
-def get_aliases(user_id):
-    with get_conn() as conn:
-        with conn.cursor() as cursor:
-            cursor.execute(
-                "SELECT alias FROM tracked_anime WHERE user_id = %s",
-                (user_id,)
-            )
-            return [r[0] for r in cursor.fetchall()]
-
-
-def get_all_tracked():
-    with get_conn() as conn:
-        with conn.cursor() as cursor:
-            cursor.execute("""
-                SELECT user_id, anime_id, last_watched, last_notified
-                FROM tracked_anime
-            """)
-            return cursor.fetchall()
-
+async def get_all_tracked():
+    async with get_conn() as conn:
+        rows = await conn.fetch("""
+            SELECT user_id, anime_id, last_watched, last_notified
+            FROM tracked_anime
+        """)
+        return rows
 
 # ---------------- DELETE ----------------
-def remove_anime(user_id, anime_id):
-    with get_conn() as conn:
-        with conn.cursor() as cursor:
-            cursor.execute("""
-                DELETE FROM tracked_anime
-                WHERE user_id = %s AND anime_id = %s
-            """, (user_id, anime_id))
-        conn.commit()
+async def remove_anime(user_id, anime_id):
+    async with get_conn() as conn:
+        await conn.execute("""
+            DELETE FROM tracked_anime
+            WHERE user_id = $1 AND anime_id = $2
+        """, user_id, anime_id)

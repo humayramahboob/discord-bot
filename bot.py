@@ -370,12 +370,14 @@ async def untrack(interaction: discord.Interaction, identifier:str):
 
 
 @bot.tree.command(name="seasonal", description="Browse seasonal anime")
-async def seasonal(interaction: discord.Interaction, year:int=None):
+async def seasonal(interaction: discord.Interaction, year: int = None):
     await interaction.response.defer()
-    season,d_year=current_season_year()
-    data=await get_seasonal_anime(season,year or d_year)
-    view=SeasonalView(interaction.user.id,season,year or d_year,data)
-    await interaction.followup.send(embed=view.build_list_embed(),view=view)
+    season, d_year = current_season_year()
+    data = await get_seasonal_anime(season, year or d_year)
+    all_tracked = await get_all_tracked()
+    tracked_ids = {anime_id for uid, anime_id, _, _ in all_tracked if uid == interaction.user.id}
+    view = SeasonalView(interaction.user.id, season, year or d_year, data, tracked_ids)
+    await interaction.followup.send(embed=view.build_list_embed(), view=view)
 
 
 @bot.tree.command(name="alias", description="Change the alias for a tracked anime")

@@ -348,13 +348,10 @@ async def track(interaction: discord.Interaction, anime:str, alias:str=None, epi
 @bot.tree.command(name="watched", description="Update episode progress")
 async def watched(interaction: discord.Interaction, identifier: str, episode: int | None = None):
     prog = await get_progress(interaction.user.id, identifier)
-    if not prog:
-        return await interaction.response.send_message("❌ Not tracking this anime.", ephemeral=True)
+    if not prog: return await interaction.response.send_message("❌ Not tracking this anime.", ephemeral=True)
     name, _, last, anime_id, _ = prog
-    new_ep = episode or (last + 1)
-    await update_progress(interaction.user.id, anime_id, new_ep)
-    await interaction.response.send_message(f"✅ `{name}` → Episode {new_ep}.")
-
+    await update_progress(interaction.user.id, anime_id, (new_ep := episode or last + 1))
+    await (interaction.followup.send if interaction.response.is_done() else interaction.response.send_message)(f"✅ `{name}` → Episode {new_ep}.")
 STATUS_CHOICES = [
     app_commands.Choice(name="Watching", value="watching"),
     app_commands.Choice(name="Watched", value="watched"),
